@@ -1,0 +1,7 @@
+/xgameruntime.dll
+tokens.txt
+login-code.txt
+login-error.txt
+__pycache__/
+*.pyc
+src/test_xgr.exe
