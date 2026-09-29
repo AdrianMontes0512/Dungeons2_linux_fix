@@ -1414,7 +1414,7 @@ static char g_compat_unix[360];
 static char g_token_z[420];
 static char g_code_z[420];
 static char g_err_z[420];
-static char g_auth_cmd[700];
+static char g_auth_cmd[900];
 
 static void compat_paths(void)
 {
@@ -1444,9 +1444,19 @@ static void compat_paths(void)
     snprintf(g_token_z, sizeof g_token_z, "%s\\tokens.txt", wine);
     snprintf(g_code_z, sizeof g_code_z, "%s\\login-code.txt", wine);
     snprintf(g_err_z, sizeof g_err_z, "%s\\login-error.txt", wine);
-    snprintf(g_auth_cmd, sizeof g_auth_cmd,
-             "C:\\windows\\system32\\start.exe /unix /usr/bin/python3 %s/xauth.py",
-             g_compat_unix);
+    {
+        /* Prefer the helper's virtual environment; fall back to system Python. */
+        char venv_win[420];
+        char python_unix[400];
+        snprintf(venv_win, sizeof venv_win, "%s\\.venv\\bin\\python3", wine);
+        if (GetFileAttributesA(venv_win) != INVALID_FILE_ATTRIBUTES)
+            snprintf(python_unix, sizeof python_unix, "%s/.venv/bin/python3", g_compat_unix);
+        else
+            snprintf(python_unix, sizeof python_unix, "/usr/bin/python3");
+        snprintf(g_auth_cmd, sizeof g_auth_cmd,
+                 "C:\\windows\\system32\\start.exe /unix %s %s/xauth.py",
+                 python_unix, g_compat_unix);
+    }
 }
 
 static int auth_read_file(void)

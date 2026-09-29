@@ -6,7 +6,7 @@ On first launch it signs you in with your own Microsoft account through the norm
 
 ## Install
 
-Proton and Python 3 are required. The device-token step also needs the third-party [`cryptography`](https://pypi.org/project/cryptography/) package, which is not part of the standard library; install it with `python3 -m pip install cryptography` (or your distro's `python3-cryptography`). Clone this repository into the directory the DLL searches:
+Proton and Python 3 are required. Clone this repository into the directory the DLL searches and run the installer:
 
 ```sh
 git clone git@github.com:Alextibtab/Dungeons2_linux_fix.git ~/.local/share/dungeons2-compat
@@ -14,6 +14,8 @@ cd ~/.local/share/dungeons2-compat
 chmod +x install.sh xauth.py
 ./install.sh
 ```
+
+`install.sh` creates a Python virtual environment in `.venv` and installs the third-party [`cryptography`](https://pypi.org/project/cryptography/) package into it; the device-token step needs that package. The DLL runs `xauth.py` with the environment's interpreter and falls back to `/usr/bin/python3` when `.venv` is absent. Creating a venv needs Python's `venv` module — on Debian/Ubuntu install `python3-venv` first (`sudo apt install python3-venv`).
 
 `install.sh` copies `src/xgameruntime.dll` to three places:
 
@@ -37,7 +39,7 @@ Start the game from Steam. A window shows a code and opens <https://www.microsof
 
 The token file is `~/.local/share/dungeons2-compat/tokens.txt` (mode `0600`). Do not share it. When it expires, the next launch refreshes it or asks you to sign in again.
 
-The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` for the general Xbox services, `rp://api.minecraftservices.com/` for Minecraft, and `http://playfab.xboxlive.com/` for PlayFab. The PlayFab token is minted with a proof-of-possession device token, which PlayFab requires; without it the account-link step fails. Device-token creation needs the `cryptography` Python package, so install it alongside the helper.
+The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` for the general Xbox services, `rp://api.minecraftservices.com/` for Minecraft, and `http://playfab.xboxlive.com/` for PlayFab. The PlayFab token is minted with a proof-of-possession device token, which PlayFab requires; without it the account-link step fails.
 
 ## Rebuild
 

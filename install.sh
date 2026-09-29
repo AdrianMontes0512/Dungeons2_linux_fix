@@ -9,6 +9,36 @@ if [ ! -f "$DLL" ]; then
     exit 1
 fi
 
+# xauth.py runs under a self-contained virtual environment so the device-token
+# step gets the third-party cryptography package without touching system Python.
+PY=${PYTHON:-/usr/bin/python3}
+[ -x "$PY" ] || PY=python3
+if ! command -v "$PY" >/dev/null 2>&1; then
+    echo "Python 3 is required (xauth.py runs under it)." >&2
+    exit 1
+fi
+
+VENV="$ROOT/.venv"
+if [ ! -x "$VENV/bin/python3" ]; then
+    echo "Creating a Python virtual environment in $VENV"
+    "$PY" -m venv "$VENV" >/dev/null 2>&1 || true
+fi
+if [ -x "$VENV/bin/python3" ] && ! "$VENV/bin/python3" -c "import cryptography" >/dev/null 2>&1; then
+    echo "Installing cryptography into $VENV"
+    "$VENV/bin/python3" -m pip install --quiet --disable-pip-version-check cryptography >/dev/null 2>&1 || true
+fi
+if [ ! -x "$VENV/bin/python3" ] || ! "$VENV/bin/python3" -c "import cryptography" >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+Could not set up the virtual environment. Install Python's venv support, then
+re-run install.sh:
+
+  Debian/Ubuntu  sudo apt install python3-venv
+  Fedora         sudo dnf install python3
+  Arch           sudo pacman -S python
+EOF
+    exit 1
+fi
+
 STEAM_ROOT=${STEAM_ROOT:-$HOME/.local/share/Steam}
 if [ ! -f "$STEAM_ROOT/steamapps/libraryfolders.vdf" ] && [ -f "$HOME/.steam/steam/steamapps/libraryfolders.vdf" ]; then
     STEAM_ROOT=$HOME/.steam/steam
