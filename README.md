@@ -7,8 +7,8 @@ On first launch it signs you in with your own Microsoft account through the norm
 > **Fork note.** This fork fixes a crash with the current game build (1.1.1.0): the
 > original hooked `XCurl.dll` at hardcoded IAT offsets that now land inside code.
 > The hook now resolves WinHTTP imports by name. It also makes the installer work
-> from any clone location. Full guide in Spanish, including exactly what every file
-> does: [INSTRUCCIONES.md](INSTRUCCIONES.md).
+> from any clone location. Full guide, including exactly what every file does:
+> [INSTRUCTIONS.md](INSTRUCTIONS.md) (English) · [INSTRUCCIONES.md](INSTRUCCIONES.md) (español).
 
 ## Install
 

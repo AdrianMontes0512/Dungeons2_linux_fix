@@ -1,5 +1,7 @@
 # Minecraft Dungeons II en Linux (Proton)
 
+*[English version](INSTRUCTIONS.md)*
+
 Minecraft Dungeons II (Steam, app `1912410`) no arranca en Proton porque necesita
 **Microsoft Gaming Services** (`xgameruntime.dll`), que solo existe en Windows.
 Este repo trae un reemplazo propio de ese DLL, escrito desde cero en C
@@ -7,6 +9,7 @@ Este repo trae un reemplazo propio de ese DLL, escrito desde cero en C
 archivo del juego.** Solo agrega un DLL junto al juego.
 
 Es un fork de [Alextibtab/Dungeons2_linux_fix](https://github.com/Alextibtab/Dungeons2_linux_fix)
+(a su vez fork de [Kubas556/Dungeons2_linux_fix](https://github.com/Kubas556/Dungeons2_linux_fix))
 que corrige un crash con la versión actual del juego (1.1.1.0) y hace la
 instalación universal. Los detalles están en [Cambios respecto al original](#cambios-respecto-al-original).
 
