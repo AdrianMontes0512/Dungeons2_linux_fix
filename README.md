@@ -4,26 +4,31 @@ A local stand-in for Microsoft Gaming Services so Minecraft Dungeons II (Steam a
 
 On first launch it signs you in with your own Microsoft account through the normal device-code page at <https://www.microsoft.com/link>, then caches the Xbox tokens next to the helper. Later launches reuse that cache until it expires.
 
+> **Fork note.** This fork fixes a crash with the current game build (1.1.1.0): the
+> original hooked `XCurl.dll` at hardcoded IAT offsets that now land inside code.
+> The hook now resolves WinHTTP imports by name. It also makes the installer work
+> from any clone location. Full guide in Spanish, including exactly what every file
+> does: [INSTRUCCIONES.md](INSTRUCCIONES.md).
+
 ## Install
 
-Proton and Python 3 are required. Clone this repository into the directory the DLL searches and run the installer:
+Proton and Python 3 (with `venv`) are required. Launch the game once so Steam
+creates its Proton prefix, quit it, then:
 
 ```sh
-git clone git@github.com:Alextibtab/Dungeons2_linux_fix.git ~/.local/share/dungeons2-compat
-cd ~/.local/share/dungeons2-compat
-chmod +x install.sh xauth.py
-./install.sh
+git clone https://github.com/AdrianMontes0512/Dungeons2_linux_fix.git
+cd Dungeons2_linux_fix
+./install.sh                       # or: ./install.sh --game-dir "/path/to/Minecraft Dungeons II"
 ```
 
-`install.sh` creates a Python virtual environment in `.venv` and installs the third-party [`cryptography`](https://pypi.org/project/cryptography/) package into it; the device-token step needs that package. The DLL runs `xauth.py` with the environment's interpreter and falls back to `/usr/bin/python3` when `.venv` is absent. Creating a venv needs Python's `venv` module — on Debian/Ubuntu install `python3-venv` first (`sudo apt install python3-venv`).
-
-`install.sh` copies `src/xgameruntime.dll` to three places:
+`install.sh` copies `xauth.py` to `~/.local/share/dungeons2-compat` (the DLL looks
+there), creates a venv there with the [`cryptography`](https://pypi.org/project/cryptography/)
+package, finds the game in any Steam library (native, Flatpak or Snap; paths with
+spaces are fine) and copies `src/xgameruntime.dll`:
 
 - next to `Dungeons.exe`
 - next to `Dungeons-Win64-Shipping.exe`
 - into the Proton prefix `drive_c/windows/system32`
-
-If the game lives in another Steam library, the script reads `libraryfolders.vdf`. Point `STEAM_ROOT` at your Steam install if it is not `~/.local/share/Steam`.
 
 In Steam, open the game's properties and set the launch option:
 
@@ -32,6 +37,7 @@ WINEDLLOVERRIDES="xgameruntime=n" %command%
 ```
 
 Quit the game completely before installing. A running process keeps the old DLL.
+`./uninstall.sh [--purge]` removes it again.
 
 ## First sign-in
 
@@ -43,12 +49,8 @@ The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` 
 
 ## Rebuild
 
-The DLL already in `src/` is ready to install. To build it yourself you need a MinGW-w64 posix cross compiler:
-
-```sh
-x86_64-w64-mingw32-gcc-posix -shared -O2 -Wall -Wextra -o src/xgameruntime.dll src/xgameruntime.c
-./install.sh
-```
+The DLL already in `src/` is ready to install. To build it yourself, run `./build.sh`
+(MinGW-w64 if installed, otherwise `zig cc`), then `./install.sh`.
 
 ## What the game gets
 
