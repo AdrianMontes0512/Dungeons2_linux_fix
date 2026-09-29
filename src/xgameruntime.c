@@ -2354,10 +2354,33 @@ static BOOL WINAPI hook_read(void *request, void *buffer, DWORD cap, DWORD *read
     return ok;
 }
 
-static void patch_slot(HMODULE mod, unsigned rva, void *hook, void **saved)
+/* Find the IAT slot for winhttp!name by walking the import table, so the hook
+ * survives XCurl.dll rebuilds that move the IAT. */
+static void **find_iat_slot(HMODULE mod, const char *name)
 {
-    void **slot = (void **)((unsigned char *)mod + rva);
+    unsigned char *base = (unsigned char *)mod;
+    IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+    IMAGE_DATA_DIRECTORY *dir = &nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    IMAGE_IMPORT_DESCRIPTOR *imp;
+    if (!dir->VirtualAddress) return NULL;
+    for (imp = (IMAGE_IMPORT_DESCRIPTOR *)(base + dir->VirtualAddress); imp->Name; imp++) {
+        IMAGE_THUNK_DATA *names, *slots;
+        if (_stricmp((char *)base + imp->Name, "winhttp.dll")) continue;
+        names = (IMAGE_THUNK_DATA *)(base + (imp->OriginalFirstThunk ? imp->OriginalFirstThunk : imp->FirstThunk));
+        slots = (IMAGE_THUNK_DATA *)(base + imp->FirstThunk);
+        for (; names->u1.AddressOfData; names++, slots++) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+            if (!strcmp((char *)((IMAGE_IMPORT_BY_NAME *)(base + names->u1.AddressOfData))->Name, name))
+                return (void **)&slots->u1.Function;
+        }
+    }
+    return NULL;
+}
+static void patch_slot(HMODULE mod, const char *name, void *hook, void **saved)
+{
+    void **slot = find_iat_slot(mod, name);
     DWORD old;
+    if (!slot) { xlog("XCurl import %s not found", name); return; }
     if (!VirtualProtect(slot, sizeof *slot, PAGE_READWRITE, &old)) return;
     *saved = *slot;
     *slot = hook;
@@ -2366,19 +2389,23 @@ static void patch_slot(HMODULE mod, unsigned rva, void *hook, void **saved)
 static void hook_xcurl_winhttp(void)
 {
     HMODULE mod;
+    void **slot;
     if (real_set_option) return;
     mod = GetModuleHandleW(L"XCurl.dll");
     if (!mod) return;
-    /* WinHTTP IAT RVAs in Dungeons II's shipped XCurl.dll. */
-    patch_slot(mod, 0x19440, (void *)hook_set_option, (void **)&real_set_option);
-    patch_slot(mod, 0x19428, (void *)hook_connect, (void **)&real_connect);
-    patch_slot(mod, 0x19400, (void *)hook_open_request, (void **)&real_open_request);
-    patch_slot(mod, 0x19430, (void *)hook_send, (void **)&real_send);
-    patch_slot(mod, 0x19448, (void *)hook_add_headers, (void **)&real_add_headers);
-    memcpy(&real_data_available, (unsigned char *)mod + 0x19420, sizeof real_data_available);
-    patch_slot(mod, 0x19410, (void *)hook_recv, (void **)&real_recv);
-    memcpy(&real_query, (unsigned char *)mod + 0x19470, sizeof real_query);
-    patch_slot(mod, 0x19468, (void *)hook_read, (void **)&real_read);
+    /* hook_recv needs real_query before any request completes. */
+    slot = find_iat_slot(mod, "WinHttpQueryHeaders");
+    if (!slot) { xlog("XCurl WinHTTP imports not found; not hooking"); return; }
+    memcpy(&real_query, slot, sizeof real_query);
+    if ((slot = find_iat_slot(mod, "WinHttpQueryDataAvailable")))
+        memcpy(&real_data_available, slot, sizeof real_data_available);
+    patch_slot(mod, "WinHttpSetOption", (void *)hook_set_option, (void **)&real_set_option);
+    patch_slot(mod, "WinHttpConnect", (void *)hook_connect, (void **)&real_connect);
+    patch_slot(mod, "WinHttpOpenRequest", (void *)hook_open_request, (void **)&real_open_request);
+    patch_slot(mod, "WinHttpSendRequest", (void *)hook_send, (void **)&real_send);
+    patch_slot(mod, "WinHttpAddRequestHeaders", (void *)hook_add_headers, (void **)&real_add_headers);
+    patch_slot(mod, "WinHttpReceiveResponse", (void *)hook_recv, (void **)&real_recv);
+    patch_slot(mod, "WinHttpReadData", (void *)hook_read, (void **)&real_read);
     xlog("hooked XCurl WinHTTP");
 }
 
