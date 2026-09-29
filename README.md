@@ -2,14 +2,14 @@
 
 A local stand-in for Microsoft Gaming Services so Minecraft Dungeons II (Steam app `1912410`) can start under Proton. The game looks for `xgameruntime.dll`. This repository builds that DLL. It does not modify the game and it does not include Microsoft's library.
 
-On first launch it signs you in with your own Microsoft account through the normal device-code page at <https://www.microsoft.com/link>, then caches the Xbox token next to the helper. Later launches reuse that cache until it expires.
+On first launch it signs you in with your own Microsoft account through the normal device-code page at <https://www.microsoft.com/link>, then caches the Xbox tokens next to the helper. Later launches reuse that cache until it expires.
 
 ## Install
 
-Proton and Python 3 are required. Clone this repository into the directory the DLL searches:
+Proton, Python 3, and the `cryptography` Python package are required. Clone this repository into the directory the DLL searches:
 
 ```sh
-git clone git@github.com:Kubas556/Dungeons2_linux_fix.git ~/.local/share/dungeons2-compat
+git clone git@github.com:Alextibtab/Dungeons2_linux_fix.git ~/.local/share/dungeons2-compat
 cd ~/.local/share/dungeons2-compat
 chmod +x install.sh xauth.py
 ./install.sh
