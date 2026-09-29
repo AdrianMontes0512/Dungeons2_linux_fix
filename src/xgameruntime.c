@@ -146,6 +146,39 @@ static void xlog(const char *fmt, ...)
     CloseHandle(h);
 }
 
+static int sensitive_trace_enabled(void)
+{
+    static int enabled = -1;
+    const char *value;
+    if (enabled >= 0) return enabled;
+    value = getenv("XGR_TRACE_SENSITIVE");
+    enabled = value && !strcmp(value, "1");
+    return enabled;
+}
+
+static void xlog_sensitive(const char *fmt, ...)
+{
+    char buf[8192];
+    va_list ap;
+    DWORD wrote;
+    HANDLE h;
+    int n;
+    if (!sensitive_trace_enabled()) return;
+    va_start(ap, fmt);
+    n = vsnprintf(buf, sizeof(buf) - 2, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof(buf) - 2) n = (int)sizeof(buf) - 2;
+    if (n == 0 || buf[n - 1] != '\n') buf[n++] = '\n';
+    buf[n] = 0;
+    h = CreateFileA("C:\\xgr-sensitive.log", FILE_APPEND_DATA,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteFile(h, buf, (DWORD)n, &wrote, NULL);
+    CloseHandle(h);
+}
+
 static const char *g_seen[160];
 static int g_seen_n;
 
@@ -696,6 +729,11 @@ static HRESULT WINAPI thr_Begin(void *self, XAsyncBlock *async, void *context, c
     HRESULT hr;
     (void)self;
     if (!async || !provider) return E_INVALIDARG_;
+    /* GDK requires a null queue to use the process-wide default. */
+    if (!async->queue) {
+        async->queue = process_queue();
+        if (!async->queue) return E_FAIL_;
+    }
     if (state_of(async)) return E_INVALIDARG_;
     st = calloc(1, sizeof(*st));
     if (!st) return E_FAIL_;
@@ -1351,6 +1389,7 @@ static com_obj gamertag_obj;
 static char g_gamertag[96];
 static char g_xbox_token[12000];
 static char g_mc_token[12000];
+static char g_playfab_token[12000];
 static char g_msa_token[8000];
 static unsigned long long g_xuid;
 static long long g_token_exp;
@@ -1367,6 +1406,7 @@ static void auth_apply_line(char *line)
     else if (!strcmp(line, "gamertag")) snprintf(g_gamertag, sizeof g_gamertag, "%s", val);
     else if (!strcmp(line, "xbox")) snprintf(g_xbox_token, sizeof g_xbox_token, "%s", val);
     else if (!strcmp(line, "mc")) snprintf(g_mc_token, sizeof g_mc_token, "%s", val);
+    else if (!strcmp(line, "playfab")) snprintf(g_playfab_token, sizeof g_playfab_token, "%s", val);
     else if (!strcmp(line, "msa")) snprintf(g_msa_token, sizeof g_msa_token, "%s", val);
 }
 
@@ -1423,7 +1463,7 @@ static int auth_read_file(void)
         log_once("auth file missing");
         return 0;
     }
-    g_xbox_token[0] = g_mc_token[0] = g_msa_token[0] = g_gamertag[0] = 0;
+    g_xbox_token[0] = g_mc_token[0] = g_playfab_token[0] = g_msa_token[0] = g_gamertag[0] = 0;
     g_xuid = 0;
     g_token_exp = 0;
     while (fgets(line, sizeof line, f)) {
@@ -1502,6 +1542,12 @@ static int auth_ensure(void)
 
 static const char *auth_token_for(const char *url)
 {
+    /* PlayFab only accepts a token minted for its own relying party, and the
+     * game asks for it by URL (https://playfabapi.com/). Falling back to the
+     * generic xboxlive.com token makes the account-link call fail. */
+    if (url && (strstr(url, "playfab") || strstr(url, "PlayFab"))) {
+        if (g_playfab_token[0]) return g_playfab_token;
+    }
     if (url && (strstr(url, "minecraft") || strstr(url, "Minecraft"))) {
         if (g_mc_token[0]) return g_mc_token;
     }
@@ -2068,7 +2114,9 @@ typedef struct net_sec_info {
 static BOOL (WINAPI *real_set_option)(void *, DWORD, void *, DWORD);
 static void *(WINAPI *real_connect)(void *, const WCHAR *, unsigned short, DWORD);
 static void *(WINAPI *real_open_request)(void *, const WCHAR *, const WCHAR *, const WCHAR *, const WCHAR *, const WCHAR **, DWORD);
+static BOOL (WINAPI *real_add_headers)(void *, const WCHAR *, DWORD, DWORD);
 static BOOL (WINAPI *real_send)(void *, const WCHAR *, DWORD, void *, DWORD, DWORD, DWORD_PTR);
+static BOOL (WINAPI *real_data_available)(void *, DWORD *);
 static BOOL (WINAPI *real_recv)(void *, void *);
 static BOOL (WINAPI *real_query)(void *, DWORD, const WCHAR *, void *, DWORD *, DWORD *);
 static BOOL (WINAPI *real_read)(void *, void *, DWORD, DWORD *);
@@ -2076,6 +2124,117 @@ static BOOL (WINAPI *real_read)(void *, void *, DWORD, DWORD *);
 static void *http_handles[24];
 static int http_codes[24];
 static int http_next;
+
+/* Log request shape only. Header values can contain credentials, so never log them. */
+static int http_has_header(const WCHAR *headers, DWORD length, const WCHAR *name)
+{
+    DWORD used, start, i = 0;
+    SIZE_T name_len;
+    if (!headers) return 0;
+    used = length == (DWORD)-1 ? lstrlenW(headers) : length;
+    name_len = lstrlenW(name);
+    while (i < used) {
+        while (i < used && (headers[i] == '\r' || headers[i] == '\n')) i++;
+        start = i;
+        while (i < used && headers[i] != ':' && headers[i] != '\r' && headers[i] != '\n') i++;
+        if (i < used && headers[i] == ':' && i - start == name_len &&
+            CompareStringOrdinal(headers + start, (int)name_len, name, (int)name_len, TRUE) == CSTR_EQUAL)
+            return 1;
+        while (i < used && headers[i] != '\n') i++;
+    }
+    return 0;
+}
+
+static void log_header_shape(const char *source, const WCHAR *headers, DWORD length, DWORD body_length)
+{
+    if (!headers) return;
+    xlog("http %s auth=%d signature=%d xbl_contract=%d content_type=%d cookie=%d body=%lu",
+         source,
+         http_has_header(headers, length, L"Authorization"),
+         http_has_header(headers, length, L"Signature"),
+         http_has_header(headers, length, L"X-Xbl-Contract-Version"),
+         http_has_header(headers, length, L"Content-Type"),
+         http_has_header(headers, length, L"Cookie"),
+         (unsigned long)body_length);
+}
+
+static void log_sensitive_headers(void *request, const WCHAR *headers, DWORD length)
+{
+    char buffer[7168];
+    DWORD chars;
+    int bytes;
+    if (!sensitive_trace_enabled() || !headers) return;
+    chars = length == (DWORD)-1 ? (DWORD)lstrlenW(headers) : length;
+    if (chars > 3500) chars = 3500;
+    bytes = WideCharToMultiByte(CP_UTF8, 0, headers, (int)chars, buffer, sizeof(buffer) - 1, NULL, NULL);
+    if (bytes <= 0) return;
+    buffer[bytes] = 0;
+    xlog_sensitive("headers handle=%p chars=%lu\n%s", request, (unsigned long)length, buffer);
+}
+
+static void dump_sensitive_body(void *request, const void *body, DWORD length)
+{
+    static LONG next_body;
+    char name[64];
+    DWORD wrote;
+    HANDLE h;
+    LONG index;
+    if (!sensitive_trace_enabled() || !body || !length) return;
+    index = InterlockedIncrement(&next_body);
+    snprintf(name, sizeof(name), "C:\\xgr-body-%ld.bin", (long)index);
+    h = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteFile(h, body, length, &wrote, NULL);
+    CloseHandle(h);
+    xlog_sensitive("body handle=%p file=%s length=%lu written=%lu", request, name,
+                   (unsigned long)length, (unsigned long)wrote);
+}
+
+static void dump_sensitive_response_chunk(void *request, const void *body, DWORD length)
+{
+    static LONG next_chunk;
+    char name[64];
+    DWORD wrote;
+    HANDLE h;
+    LONG index;
+    if (!sensitive_trace_enabled() || !body || !length) return;
+    index = InterlockedIncrement(&next_chunk);
+    snprintf(name, sizeof(name), "C:\\xgr-response-%ld.bin", (long)index);
+    h = CreateFileA(name, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return;
+    WriteFile(h, body, length, &wrote, NULL);
+    CloseHandle(h);
+    xlog_sensitive("response body handle=%p file=%s length=%lu written=%lu", request, name,
+                   (unsigned long)length, (unsigned long)wrote);
+}
+
+static void capture_sensitive_error_response(void *request)
+{
+    DWORD available = 0, read = 0, cap;
+    void *buffer;
+    if (!sensitive_trace_enabled() || !real_data_available || !real_read) return;
+    if (!real_data_available(request, &available) || !available) return;
+    cap = available > 65536 ? 65536 : available;
+    buffer = malloc(cap);
+    if (!buffer) return;
+    if (real_read(request, buffer, cap, &read) && read)
+        dump_sensitive_response_chunk(request, buffer, read);
+    free(buffer);
+}
+
+static void log_sensitive_response_headers(void *request)
+{
+    WCHAR headers[4096];
+    char buffer[7168];
+    DWORD length = sizeof(headers);
+    int bytes;
+    if (!sensitive_trace_enabled() || !real_query) return;
+    if (!real_query(request, 22, NULL, headers, &length, NULL)) return;
+    bytes = WideCharToMultiByte(CP_UTF8, 0, headers, -1, buffer, sizeof(buffer) - 1, NULL, NULL);
+    if (bytes <= 0) return;
+    buffer[bytes] = 0;
+    xlog_sensitive("response headers handle=%p bytes=%lu\n%s", request, (unsigned long)length, buffer);
+}
 static int http_status_of(void *req)
 {
     int i;
@@ -2116,18 +2275,32 @@ static void *WINAPI hook_connect(void *session, const WCHAR *host, unsigned shor
 static void *WINAPI hook_open_request(void *connect, const WCHAR *verb, const WCHAR *object, const WCHAR *version,
                                       const WCHAR *referrer, const WCHAR **accept, DWORD flags)
 {
-    char path[240];
+    char path[240], method[32];
+    void *request;
     static int logged;
     path[0] = 0;
+    method[0] = 0;
+    if (verb) WideCharToMultiByte(CP_UTF8, 0, verb, -1, method, sizeof method, NULL, NULL);
     if (object) WideCharToMultiByte(CP_UTF8, 0, object, -1, path, sizeof path, NULL, NULL);
     if (logged < 40 && path[0] && !strstr(path, "OneCollector")) {
         logged++;
-        xlog("http %s", path);
+        xlog("http %s %s", method, path);
     }
-    return real_open_request(connect, verb, object, version, referrer, accept, flags);
+    request = real_open_request(connect, verb, object, version, referrer, accept, flags);
+    xlog_sensitive("open handle=%p method=%s path=%s", request, method, path);
+    return request;
+}
+static BOOL WINAPI hook_add_headers(void *request, const WCHAR *headers, DWORD headers_len, DWORD modifiers)
+{
+    log_header_shape("add_headers", headers, headers_len, 0);
+    log_sensitive_headers(request, headers, headers_len);
+    return real_add_headers(request, headers, headers_len, modifiers);
 }
 static BOOL WINAPI hook_send(void *request, const WCHAR *headers, DWORD headers_len, void *optional, DWORD optional_len, DWORD total, DWORD_PTR ctx)
 {
+    log_header_shape("send", headers, headers_len, optional_len);
+    log_sensitive_headers(request, headers, headers_len);
+    dump_sensitive_body(request, optional, optional_len);
     BOOL ok = real_send(request, headers, headers_len, optional, optional_len, total, ctx);
     if (!ok) xlog("http send failed %lu", (unsigned long)GetLastError());
     return ok;
@@ -2139,6 +2312,11 @@ static BOOL WINAPI hook_recv(void *request, void *reserved)
     if (ok && real_query(request, 19 | 0x20000000, NULL, &code, &sz, NULL)) {
         static int logged;
         http_status_set(request, (int)code);
+        xlog_sensitive("response handle=%p status=%lu", request, (unsigned long)code);
+        if (code >= 400) {
+            log_sensitive_response_headers(request);
+            capture_sensitive_error_response(request);
+        }
         if (logged < 40) { logged++; xlog("http status %lu", (unsigned long)code); }
     } else if (!ok) {
         xlog("http recv failed %lu", (unsigned long)GetLastError());
@@ -2153,6 +2331,7 @@ static BOOL WINAPI hook_read(void *request, void *buffer, DWORD cap, DWORD *read
         static int logged;
         char tmp[180];
         DWORD n = *read;
+        dump_sensitive_response_chunk(request, buffer, *read);
         if (n > sizeof tmp - 1) n = sizeof tmp - 1;
         memcpy(tmp, buffer, n);
         tmp[n] = 0;
@@ -2180,13 +2359,16 @@ static void hook_xcurl_winhttp(void)
     if (real_set_option) return;
     mod = GetModuleHandleW(L"XCurl.dll");
     if (!mod) return;
-    patch_slot(mod, 0x1f498, (void *)hook_set_option, (void **)&real_set_option);
-    patch_slot(mod, 0x1f480, (void *)hook_connect, (void **)&real_connect);
-    patch_slot(mod, 0x1f4b0, (void *)hook_open_request, (void **)&real_open_request);
-    patch_slot(mod, 0x1f4a0, (void *)hook_send, (void **)&real_send);
-    patch_slot(mod, 0x1f488, (void *)hook_recv, (void **)&real_recv);
-    memcpy(&real_query, (unsigned char *)mod + 0x1f4d0, sizeof real_query);
-    patch_slot(mod, 0x1f4e8, (void *)hook_read, (void **)&real_read);
+    /* WinHTTP IAT RVAs in Dungeons II's shipped XCurl.dll. */
+    patch_slot(mod, 0x19440, (void *)hook_set_option, (void **)&real_set_option);
+    patch_slot(mod, 0x19428, (void *)hook_connect, (void **)&real_connect);
+    patch_slot(mod, 0x19400, (void *)hook_open_request, (void **)&real_open_request);
+    patch_slot(mod, 0x19430, (void *)hook_send, (void **)&real_send);
+    patch_slot(mod, 0x19448, (void *)hook_add_headers, (void **)&real_add_headers);
+    memcpy(&real_data_available, (unsigned char *)mod + 0x19420, sizeof real_data_available);
+    patch_slot(mod, 0x19410, (void *)hook_recv, (void **)&real_recv);
+    memcpy(&real_query, (unsigned char *)mod + 0x19470, sizeof real_query);
+    patch_slot(mod, 0x19468, (void *)hook_read, (void **)&real_read);
     xlog("hooked XCurl WinHTTP");
 }
 

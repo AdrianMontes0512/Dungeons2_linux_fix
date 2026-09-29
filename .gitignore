@@ -1,5 +1,6 @@
 /xgameruntime.dll
 tokens.txt
+tokens.txt.*
 login-code.txt
 login-error.txt
 __pycache__/

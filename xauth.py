@@ -5,16 +5,21 @@ The browser login uses this game's Microsoft app id. Tokens are written
 for the local runtime; they are never printed.
 """
 import base64
+import hashlib
 import json
 import os
+import struct
 import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from datetime import datetime, timezone
 
 CLIENT = "00000000497C1B94"
 SCOPE = "service::user.auth.xboxlive.com::MBI_SSL"
+PLAYFAB_RP = "http://playfab.xboxlive.com/"
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOKEN_PATH = os.path.join(HERE, "tokens.txt")
 CODE_PATH = os.path.join(HERE, "login-code.txt")
@@ -102,6 +107,76 @@ def rps_ticket(access):
     return "t=" + access
 
 
+def _b64url(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def device_token():
+    """Mint a Win32 device token through a signed proof-of-possession request.
+
+    PlayFab rejects XSTS tokens that carry no device identity, so the
+    PlayFab relying-party token has to include one. Returns None when the
+    cryptography package is unavailable or the request fails.
+    """
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import (
+            Prehashed,
+            decode_dss_signature,
+        )
+    except ImportError:
+        return None
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    point = key.public_key().public_numbers()
+    proof = {
+        "use": "sig", "alg": "ES256", "kty": "EC", "crv": "P-256",
+        "x": _b64url(point.x.to_bytes(32, "big")),
+        "y": _b64url(point.y.to_bytes(32, "big")),
+    }
+    body = json.dumps({
+        "RelyingParty": "http://auth.xboxlive.com",
+        "TokenType": "JWT",
+        "Properties": {
+            "AuthMethod": "ProofOfPossession",
+            "Id": "{%s}" % uuid.uuid4(),
+            "DeviceType": "Win32",
+            "SerialNumber": "{%s}" % uuid.uuid4(),
+            "Version": "10.0.19041",
+            "ProofKey": proof,
+        },
+    }).encode()
+
+    version = struct.pack("!I", 1)
+    epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+    filetime = int((datetime.now(timezone.utc) - epoch).total_seconds() * 10_000_000)
+    stamp = struct.pack("!Q", filetime)
+    signed = (version + b"\x00" + stamp + b"\x00" + b"POST" + b"\x00" +
+              b"/device/authenticate" + b"\x00" + b"\x00" + body[:8192] + b"\x00")
+    raw = key.sign(hashlib.sha256(signed).digest(), ec.ECDSA(Prehashed(hashes.SHA256())))
+    r, s = decode_dss_signature(raw)
+    signature = base64.b64encode(
+        version + stamp + r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    ).decode()
+
+    request = urllib.request.Request(
+        "https://device.auth.xboxlive.com/device/authenticate",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-xbl-contract-version": "1",
+            "Signature": signature,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.loads(response.read().decode()).get("Token")
+    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError):
+        return None
+
+
 def xbox_user(access):
     result = post("https://user.auth.xboxlive.com/user/authenticate", payload={
         "Properties": {
@@ -117,9 +192,12 @@ def xbox_user(access):
     return result["Token"]
 
 
-def xsts(user_token, relying):
+def xsts(user_token, relying, device=None):
+    properties = {"SandboxId": "RETAIL", "UserTokens": [user_token]}
+    if device:
+        properties["DeviceToken"] = device
     result = post("https://xsts.auth.xboxlive.com/xsts/authorize", payload={
-        "Properties": {"SandboxId": "RETAIL", "UserTokens": [user_token]},
+        "Properties": properties,
         "RelyingParty": relying,
         "TokenType": "JWT",
     })
@@ -211,13 +289,16 @@ def finish(msa):
     if not xbox:
         raise SystemExit("Xbox token failed: %s" % xerr)
     minecraft, mc_err = xsts(user_token, "rp://api.minecraftservices.com/")
+    playfab, pf_err = xsts(user_token, PLAYFAB_RP, device_token())
     header, claim = auth_header(xbox)
     mc_header = auth_header(minecraft)[0] if minecraft else header
+    pf_header = auth_header(playfab)[0] if playfab else ""
     exp = jwt_exp(xbox["Token"])
-    if minecraft:
-        mc_exp = jwt_exp(minecraft["Token"])
-        if mc_exp:
-            exp = min(exp, mc_exp) if exp else mc_exp
+    for extra in (minecraft, playfab):
+        if extra:
+            extra_exp = jwt_exp(extra["Token"])
+            if extra_exp:
+                exp = min(exp, extra_exp) if exp else extra_exp
     if not exp:
         exp = int(time.time()) + 4 * 3600
     write_tokens([
@@ -227,9 +308,11 @@ def finish(msa):
         ("gamertag", claim.get("gtg", "Player")),
         ("xbox", header),
         ("mc", mc_header),
+        ("playfab", pf_header),
         ("msa", msa["access_token"]),
         ("refresh", msa.get("refresh_token", "")),
         ("mc_error", "" if minecraft else str(mc_err or "")),
+        ("pf_error", "" if playfab else str(pf_err or "")),
     ])
 
 

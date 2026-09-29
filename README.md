@@ -37,6 +37,8 @@ Start the game from Steam. A window shows a code and opens <https://www.microsof
 
 The token file is `~/.local/share/dungeons2-compat/tokens.txt` (mode `0600`). Do not share it. When it expires, the next launch refreshes it or asks you to sign in again.
 
+The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` for the general Xbox services, `rp://api.minecraftservices.com/` for Minecraft, and `http://playfab.xboxlive.com/` for PlayFab. The PlayFab token is minted with a proof-of-possession device token, which PlayFab requires; without it the account-link step fails. Device-token creation needs the `cryptography` Python package, so install it alongside the helper.
+
 ## Rebuild
 
 The DLL already in `src/` is ready to install. To build it yourself you need a MinGW-w64 posix cross compiler:
@@ -48,4 +50,4 @@ x86_64-w64-mingw32-gcc-posix -shared -O2 -Wall -Wextra -o src/xgameruntime.dll s
 
 ## What the game gets
 
-The DLL answers the Gaming Services calls this title makes: task queues, a signed-in Xbox user (your real XUID and gamertag from the cache), title id, retail sandbox, persistent local storage, and the HTTPS security settings XCurl asks for before it connects. PlayFab login still uses the Steam session. The Microsoft token is returned only when the game asks for one.
+The DLL answers the Gaming Services calls this title makes: task queues, a signed-in Xbox user (your real XUID and gamertag from the cache), title id, retail sandbox, persistent local storage, and the HTTPS security settings XCurl asks for before it connects. PlayFab login still uses the Steam session. The Microsoft token is returned only when the game asks for one, and the DLL picks the token that matches the requested service: the Minecraft token for `api.minecraftservices.com`, the PlayFab token for `playfabapi.com`, and the general Xbox token for everything else such as `*.xboxlive.com`.
