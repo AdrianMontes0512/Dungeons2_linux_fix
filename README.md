@@ -6,7 +6,7 @@ On first launch it signs you in with your own Microsoft account through the norm
 
 ## Install
 
-Proton, Python 3, and the `cryptography` Python package are required. Clone this repository into the directory the DLL searches:
+Proton and Python 3 are required. The device-token step also needs the third-party [`cryptography`](https://pypi.org/project/cryptography/) package, which is not part of the standard library; install it with `python3 -m pip install cryptography` (or your distro's `python3-cryptography`). Clone this repository into the directory the DLL searches:
 
 ```sh
 git clone git@github.com:Alextibtab/Dungeons2_linux_fix.git ~/.local/share/dungeons2-compat
