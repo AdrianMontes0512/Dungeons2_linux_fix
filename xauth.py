@@ -114,9 +114,10 @@ def _b64url(raw):
 def device_token():
     """Mint a Win32 device token through a signed proof-of-possession request.
 
-    PlayFab rejects XSTS tokens that carry no device identity, so the
-    PlayFab relying-party token has to include one. Returns None when the
-    cryptography package is unavailable or the request fails.
+    PlayFab and the Minecraft services account link reject XSTS tokens that
+    carry no device identity, so both relying-party tokens include one.
+    Returns None when the cryptography package is unavailable or the
+    request fails.
     """
     try:
         from cryptography.hazmat.primitives import hashes
@@ -288,8 +289,12 @@ def finish(msa):
     xbox, xerr = xsts(user_token, "http://xboxlive.com")
     if not xbox:
         raise SystemExit("Xbox token failed: %s" % xerr)
-    minecraft, mc_err = xsts(user_token, "rp://api.minecraftservices.com/")
-    playfab, pf_err = xsts(user_token, PLAYFAB_RP, device_token())
+    # One device identity for both tokens: PlayFab rejects tokens without it,
+    # and the Steam account link (vex.minecraftservices.com) answers 500,
+    # shown in game as error 0029, when the Minecraft token lacks it.
+    device = device_token()
+    minecraft, mc_err = xsts(user_token, "rp://api.minecraftservices.com/", device)
+    playfab, pf_err = xsts(user_token, PLAYFAB_RP, device)
     header, claim = auth_header(xbox)
     mc_header = auth_header(minecraft)[0] if minecraft else header
     pf_header = auth_header(playfab)[0] if playfab else ""

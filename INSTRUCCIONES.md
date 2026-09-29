@@ -57,6 +57,24 @@ caduca, vuelve a pedirte el código.
 Una actualización puede borrar o reemplazar el DLL. Vuelve a correr `./install.sh`.
 Pasa lo mismo si cambias de versión de Proton.
 
+### Si ya lo tenías instalado
+
+Las versiones anteriores a este arreglo fallan al vincular la cuenta de Microsoft
+en el juego (**error 0029**, "No se pudo vincular la cuenta"). Para actualizar,
+cierra el juego por completo y luego:
+
+```sh
+cd Dungeons2_linux_fix
+git pull
+./install.sh
+sed -i 's/^exp=.*/exp=0/' ~/.local/share/dungeons2-compat/tokens.txt
+```
+
+La última línea marca los tokens guardados como caducados. En el siguiente
+arranque se renuevan con tu sesión guardada, sin pedir código (si la sesión
+también caducó, aparece la ventana de login como la primera vez). Después usa
+**Vincular** en la sección Cuenta de Microsoft del juego.
+
 ### Desinstalar
 
 ```sh
@@ -140,7 +158,7 @@ Solo usa la biblioteca estándar de Python más `cryptography`. Se conecta
 |----------|----------|
 | `login.live.com` | Login por código (*device code*) con el ID de app de este juego, y renovación del token. |
 | `user.auth.xboxlive.com` | Convierte el login de Microsoft en un token de usuario de Xbox. |
-| `device.auth.xboxlive.com` | Crea un token de "dispositivo" firmado con una clave nueva al azar. PlayFab lo exige. |
+| `device.auth.xboxlive.com` | Crea un token de "dispositivo" firmado con una clave nueva al azar. PlayFab y la vinculación de cuenta de Minecraft lo exigen. |
 | `xsts.auth.xboxlive.com` | Pide los 3 tokens finales: Xbox, Minecraft y PlayFab. |
 
 - Guarda todo en `~/.local/share/dungeons2-compat/tokens.txt` con permisos `0600`
@@ -179,6 +197,7 @@ Compiladores posibles: `sudo pacman -S mingw-w64-gcc` (Arch),
 | No aparece el código de login | Revisa `~/.local/share/dungeons2-compat/login-code.txt` y `login-error.txt`. |
 | `install.sh` dice que no encuentra la carpeta de Proton | Abre el juego una vez, ciérralo y vuelve a instalar. |
 | Dejó de funcionar tras una actualización | `./install.sh` otra vez. |
+| "No se pudo vincular la cuenta", error 0029 | Actualiza y renueva los tokens: ver *Si ya lo tenías instalado*. |
 | Quieres ver qué pasó | `drive_c/xgr.log` dentro de `steamapps/compatdata/1912410/pfx/`. |
 
 ---
@@ -197,3 +216,9 @@ Compiladores posibles: `sudo pacman -S mingw-w64-gcc` (Arch),
   en la ruta (el original fallaba ahí), acepta `--game-dir`, no se rompe si
   todavía no existe la carpeta de Proton y se niega a instalar con el juego abierto.
 - Nuevos `uninstall.sh` y `build.sh`.
+- **Error 0029 al vincular la cuenta corregido.** Vincular la cuenta de Microsoft
+  en el juego (`POST vex.minecraftservices.com/account/steam/link`) devolvía
+  HTTP 500 porque el token de Minecraft no tenía identidad de dispositivo.
+  `xauth.py` ahora genera los tokens de Minecraft y PlayFab con el mismo device
+  token. Con `XGR_TRACE_SENSITIVE=1` el DLL también guarda el cuerpo de las
+  respuestas con error, que XCurl lee de forma asíncrona.

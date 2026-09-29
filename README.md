@@ -7,8 +7,13 @@ On first launch it signs you in with your own Microsoft account through the norm
 > **Fork note.** This fork fixes a crash with the current game build (1.1.1.0): the
 > original hooked `XCurl.dll` at hardcoded IAT offsets that now land inside code.
 > The hook now resolves WinHTTP imports by name. It also makes the installer work
-> from any clone location. Full guide, including exactly what every file does:
+> from any clone location, and fixes in-game account linking (error 0029).
+> Full guide, including exactly what every file does:
 > [INSTRUCTIONS.md](INSTRUCTIONS.md) (English) · [INSTRUCCIONES.md](INSTRUCCIONES.md) (español).
+>
+> **Already installed?** Quit the game, `git pull`, `./install.sh`, then
+> `sed -i 's/^exp=.*/exp=0/' ~/.local/share/dungeons2-compat/tokens.txt` so the
+> next launch renews the tokens. Details: "If you already installed an older version" in the guide.
 
 ## Install
 
@@ -45,7 +50,7 @@ Start the game from Steam. A window shows a code and opens <https://www.microsof
 
 The token file is `~/.local/share/dungeons2-compat/tokens.txt` (mode `0600`). Do not share it. When it expires, the next launch refreshes it or asks you to sign in again.
 
-The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` for the general Xbox services, `rp://api.minecraftservices.com/` for Minecraft, and `http://playfab.xboxlive.com/` for PlayFab. The PlayFab token is minted with a proof-of-possession device token, which PlayFab requires; without it the account-link step fails.
+The cache holds three Xbox tokens, one per relying party: `http://xboxlive.com` for the general Xbox services, `rp://api.minecraftservices.com/` for Minecraft, and `http://playfab.xboxlive.com/` for PlayFab. The Minecraft and PlayFab tokens are minted with the same proof-of-possession device token. PlayFab requires it, and without it on the Minecraft token the in-game account link fails with error 0029.
 
 ## Rebuild
 

@@ -2130,6 +2130,9 @@ static BOOL (WINAPI *real_data_available)(void *, DWORD *);
 static BOOL (WINAPI *real_recv)(void *, void *);
 static BOOL (WINAPI *real_query)(void *, DWORD, const WCHAR *, void *, DWORD *, DWORD *);
 static BOOL (WINAPI *real_read)(void *, void *, DWORD, DWORD *);
+typedef void (CALLBACK *http_status_cb)(void *, DWORD_PTR, DWORD, void *, DWORD);
+static void *(WINAPI *real_set_callback)(void *, http_status_cb, DWORD, DWORD_PTR);
+static http_status_cb real_status_cb;
 
 static void *http_handles[24];
 static int http_codes[24];
@@ -2354,6 +2357,26 @@ static BOOL WINAPI hook_read(void *request, void *buffer, DWORD cap, DWORD *read
     return ok;
 }
 
+/* XCurl drives WinHTTP asynchronously: WinHttpReadData returns before any data
+ * arrives and the bytes show up in the READ_COMPLETE callback instead. Wrap the
+ * callback so the sensitive trace can capture error response bodies. */
+#define WINHTTP_CALLBACK_STATUS_READ_COMPLETE 0x00080000u
+static void CALLBACK hook_status_cb(void *handle, DWORD_PTR ctx, DWORD status, void *info, DWORD info_len)
+{
+    if (status == WINHTTP_CALLBACK_STATUS_READ_COMPLETE && info && info_len && http_status_of(handle) >= 400)
+        dump_sensitive_response_chunk(handle, info, info_len);
+    if (real_status_cb) real_status_cb(handle, ctx, status, info, info_len);
+}
+static void *WINAPI hook_set_callback(void *handle, http_status_cb cb, DWORD flags, DWORD_PTR reserved)
+{
+    if (cb && cb != hook_status_cb) {
+        if (real_status_cb && real_status_cb != cb) xlog("status callback replaced");
+        real_status_cb = cb;
+        cb = hook_status_cb;
+    }
+    return real_set_callback(handle, cb, flags, reserved);
+}
+
 /* Find the IAT slot for winhttp!name by walking the import table, so the hook
  * survives XCurl.dll rebuilds that move the IAT. */
 static void **find_iat_slot(HMODULE mod, const char *name)
@@ -2406,6 +2429,7 @@ static void hook_xcurl_winhttp(void)
     patch_slot(mod, "WinHttpAddRequestHeaders", (void *)hook_add_headers, (void **)&real_add_headers);
     patch_slot(mod, "WinHttpReceiveResponse", (void *)hook_recv, (void **)&real_recv);
     patch_slot(mod, "WinHttpReadData", (void *)hook_read, (void **)&real_read);
+    patch_slot(mod, "WinHttpSetStatusCallback", (void *)hook_set_callback, (void **)&real_set_callback);
     xlog("hooked XCurl WinHTTP");
 }
 

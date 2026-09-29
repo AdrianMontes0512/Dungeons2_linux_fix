@@ -57,6 +57,23 @@ it expires, asks you for a code again.
 An update can remove or replace the DLL. Run `./install.sh` again. The same
 applies if you switch Proton versions.
 
+### If you already installed an older version
+
+Versions before this fix fail to link the Microsoft account in game (**error
+0029**, "Could not link the account"). To update, quit the game completely, then:
+
+```sh
+cd Dungeons2_linux_fix
+git pull
+./install.sh
+sed -i 's/^exp=.*/exp=0/' ~/.local/share/dungeons2-compat/tokens.txt
+```
+
+The last line marks the cached tokens as expired. On the next launch they are
+renewed with your saved session, without asking for a code (if the session
+expired too, the sign-in window appears as on the first launch). Then use
+**Link** in the game's Microsoft account settings.
+
 ### Uninstall
 
 ```sh
@@ -140,7 +157,7 @@ It only uses the Python standard library plus `cryptography`. It connects
 |--------|---------|
 | `login.live.com` | Device-code sign-in with this game's app ID, and token refresh. |
 | `user.auth.xboxlive.com` | Turns the Microsoft sign-in into an Xbox user token. |
-| `device.auth.xboxlive.com` | Creates a "device" token signed with a fresh random key. PlayFab requires it. |
+| `device.auth.xboxlive.com` | Creates a "device" token signed with a fresh random key. PlayFab and the Minecraft account link require it. |
 | `xsts.auth.xboxlive.com` | Requests the 3 final tokens: Xbox, Minecraft and PlayFab. |
 
 - Stores everything in `~/.local/share/dungeons2-compat/tokens.txt` with mode
@@ -178,6 +195,7 @@ Possible compilers: `sudo pacman -S mingw-w64-gcc` (Arch),
 | The sign-in code never shows up | Check `~/.local/share/dungeons2-compat/login-code.txt` and `login-error.txt`. |
 | `install.sh` says the Proton prefix is missing | Launch the game once, quit it and install again. |
 | It stopped working after an update | Run `./install.sh` again. |
+| "Could not link the account", error 0029 | Update and renew the tokens: see *If you already installed an older version*. |
 | You want to see what happened | `drive_c/xgr.log` inside `steamapps/compatdata/1912410/pfx/`. |
 
 ---
@@ -196,3 +214,9 @@ Possible compilers: `sudo pacman -S mingw-w64-gcc` (Arch),
   original broke there), accepts `--game-dir`, does not fail when the Proton
   prefix does not exist yet, and refuses to install while the game is running.
 - New `uninstall.sh` and `build.sh`.
+- **Account link error 0029 fixed.** Linking the Microsoft account in game
+  (`POST vex.minecraftservices.com/account/steam/link`) returned HTTP 500
+  because the Minecraft token had no device identity. `xauth.py` now mints the
+  Minecraft and PlayFab tokens with the same device token. With
+  `XGR_TRACE_SENSITIVE=1` the DLL also saves error response bodies, which
+  XCurl reads asynchronously.
